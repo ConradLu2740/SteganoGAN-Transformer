@@ -1,0 +1,11 @@
+checkpoints/
+*.pth
+__pycache__/
+*.pyc
+.DS_Store
+data/datasets/
+runs/
+*.egg-info/
+dist/
+build/
+.env
