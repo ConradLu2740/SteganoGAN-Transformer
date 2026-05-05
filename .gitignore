@@ -9,3 +9,6 @@ runs/
 dist/
 build/
 .env
+results/
+test_*.py
+.trae/

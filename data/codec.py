@@ -1,16 +1,98 @@
 import struct
+import reedsolo
 from typing import Tuple
 
 
 LENGTH_PREFIX_BYTES = 4
 FILENAME_LENGTH_BYTES = 2
 MAX_FILENAME_LENGTH = 65535
+RS_BLOCK_DATA = 223
+RS_BLOCK_PARITY = 32
+RS_BLOCK_TOTAL = 255
+ENCODED_SIZE_PREFIX_BYTES = 4
+PAYLOAD_SIZE_PREFIX_BYTES = 4
+
+
+def _rs_encode(payload_bytes: bytes) -> bytes:
+    """使用Reed-Solomon纠错码对字节序列进行分块编码
+
+    将输入字节按RS_BLOCK_DATA(223)字节分块，每块补零到223字节后RS编码为完整255字节。
+    最后一块不足223字节时也补零编码，保持所有块统一为255字节。
+
+    Args:
+        payload_bytes: 待编码的原始字节序列
+
+    Returns:
+        RS编码后的字节序列（长度为255的整数倍）
+    """
+    rs = reedsolo.RSCodec(RS_BLOCK_PARITY)
+    encoded_blocks = []
+    offset = 0
+    while offset < len(payload_bytes):
+        chunk = payload_bytes[offset:offset + RS_BLOCK_DATA]
+        if len(chunk) < RS_BLOCK_DATA:
+            chunk = chunk + b"\x00" * (RS_BLOCK_DATA - len(chunk))
+        encoded_blocks.append(rs.encode(chunk))
+        offset += RS_BLOCK_DATA
+    return b"".join(encoded_blocks)
+
+
+def _rs_decode(encoded_bytes: bytes, data_byte_count: int) -> bytes:
+    """使用Reed-Solomon纠错码对字节序列进行分块解码
+
+    每块255字节解码为223字节，自动纠正每块中最多16字节的错误。
+
+    Args:
+        encoded_bytes: RS编码后的字节序列（长度应为255的整数倍）
+        data_byte_count: 原始数据的总字节数，用于确定返回的字节长度
+
+    Returns:
+        解码纠错后的原始字节序列
+
+    Raises:
+        ValueError: 当RS解码失败（错误超出纠错能力）时抛出
+    """
+    rs = reedsolo.RSCodec(RS_BLOCK_PARITY)
+    num_blocks = len(encoded_bytes) // RS_BLOCK_TOTAL
+    decoded_blocks = []
+
+    for i in range(num_blocks):
+        block = encoded_bytes[i * RS_BLOCK_TOTAL:(i + 1) * RS_BLOCK_TOTAL]
+        try:
+            decoded = rs.decode(block)
+            decoded_blocks.append(decoded[0])
+        except reedsolo.ReedSolomonError as e:
+            raise ValueError(f"RS解码失败: 第{i}块纠错失败: {e}")
+
+    full_decoded = b"".join(decoded_blocks)
+    return full_decoded[:data_byte_count]
+
+
+def _bits_to_bytes(bits: str) -> bytes:
+    """将比特流字符串转换为字节序列
+
+    Args:
+        bits: 比特流字符串
+
+    Returns:
+        对应的字节序列
+    """
+    byte_list = []
+    for i in range(0, len(bits), 8):
+        chunk = bits[i:i + 8]
+        if len(chunk) < 8:
+            chunk = chunk + "0" * (8 - len(chunk))
+        byte_list.append(int(chunk, 2))
+    return bytes(byte_list)
 
 
 def text_to_bits(text: str, fixed_length_bits: int = None) -> str:
-    """将UTF-8文本编码为比特流字符串，使用三重冗余长度前缀提高鲁棒性
+    """将UTF-8文本编码为比特流字符串，使用Reed-Solomon纠错码保护
 
-    将长度前缀重复3次放在开头，提高解码成功率。
+    编码格式: [encoded_size_4B][RS(text_bytes || length_4B)][padding_zeros]
+    - encoded_size: 4字节大端序，记录RS编码后的数据字节数（用于解码时定位真实数据边界）
+    - text_bytes || length_4B: 文本的UTF-8字节 + 4字节大端序文本长度（长度在末尾）
+    - padding_zeros: 填充到fixed_length_bits的零字节
 
     Args:
         text: 待编码的文本字符串
@@ -21,15 +103,15 @@ def text_to_bits(text: str, fixed_length_bits: int = None) -> str:
     """
     text_bytes = text.encode("utf-8")
     length_prefix = struct.pack(">I", len(text_bytes))
-    length_bits = "".join(format(b, "08b") for b in length_prefix)
-    text_bits = "".join(format(b, "08b") for b in text_bytes)
-
-    # 格式: [长度前缀×3][文本比特] - 三重冗余
-    data_bits = length_bits * 3 + text_bits
+    payload = text_bytes + length_prefix
+    encoded_bytes = _rs_encode(payload)
+    encoded_size_header = struct.pack(">I", len(encoded_bytes))
+    payload_size_header = struct.pack(">I", len(payload))
+    full_data = encoded_size_header + payload_size_header + encoded_bytes
+    data_bits = "".join(format(b, "08b") for b in full_data)
 
     if fixed_length_bits is not None:
         if len(data_bits) > fixed_length_bits:
-            # 保留长度前缀，截断文本
             data_bits = data_bits[:fixed_length_bits]
         else:
             data_bits = data_bits + "0" * (fixed_length_bits - len(data_bits))
@@ -38,62 +120,52 @@ def text_to_bits(text: str, fixed_length_bits: int = None) -> str:
 
 
 def bits_to_text(bits: str) -> str:
-    """将比特流字符串解码为UTF-8文本，使用三重冗余长度前缀
+    """将比特流字符串解码为UTF-8文本，使用Reed-Solomon纠错码自动纠正错误
+
+    解码流程:
+    1. 比特流→字节→读取前4字节获取RS编码数据大小
+    2. 提取编码数据→RS解码→从末尾提取长度→提取文本→UTF-8解码
 
     Args:
         bits: 比特流字符串（仅包含'0'和'1'）
 
     Returns:
         解码后的文本字符串
+
+    Raises:
+        ValueError: 当RS解码失败或数据格式无效时抛出
     """
-    length_bits_count = LENGTH_PREFIX_BYTES * 8
-    redundancy_bits = length_bits_count * 3
+    raw_bytes = _bits_to_bytes(bits)
 
-    if len(bits) < redundancy_bits:
-        raise ValueError(f"比特流长度不足: {len(bits)} < {redundancy_bits}")
+    header_size = ENCODED_SIZE_PREFIX_BYTES + PAYLOAD_SIZE_PREFIX_BYTES
+    min_size = header_size + RS_BLOCK_TOTAL
+    if len(raw_bytes) < min_size:
+        raise ValueError(f"比特流长度不足: {len(raw_bytes)} < {min_size}")
 
-    # 读取三个长度前缀，投票决定
-    len1 = struct.unpack(">I", int(bits[:length_bits_count], 2).to_bytes(LENGTH_PREFIX_BYTES, "big"))[0]
-    len2 = struct.unpack(">I", int(bits[length_bits_count:length_bits_count*2], 2).to_bytes(LENGTH_PREFIX_BYTES, "big"))[0]
-    len3 = struct.unpack(">I", int(bits[length_bits_count*2:length_bits_count*3], 2).to_bytes(LENGTH_PREFIX_BYTES, "big"))[0]
+    encoded_size = struct.unpack(">I", raw_bytes[:ENCODED_SIZE_PREFIX_BYTES])[0]
+    payload_size = struct.unpack(">I", raw_bytes[ENCODED_SIZE_PREFIX_BYTES:header_size])[0]
 
-    # 投票：选择出现次数最多的长度
-    lengths = [len1, len2, len3]
-    text_length = max(set(lengths), key=lengths.count)
+    if encoded_size == 0 or encoded_size > len(raw_bytes) - header_size:
+        raise ValueError(f"无效的编码数据大小: {encoded_size}")
+    if payload_size == 0 or payload_size > encoded_size // RS_BLOCK_TOTAL * RS_BLOCK_DATA:
+        raise ValueError(f"无效的payload大小: {payload_size}")
 
-    # 如果投票结果不合理，尝试单个值
-    if text_length == 0 or text_length > 10000:
-        for l in lengths:
-            if 0 < l < 1000:
-                text_length = l
-                break
+    encoded_bytes = raw_bytes[header_size:header_size + encoded_size]
+    decoded_bytes = _rs_decode(encoded_bytes, payload_size)
 
-    if text_length == 0 or text_length > 10000:
-        # 兜底：直接解码可见内容
-        try:
-            all_bytes = bytes(int(bits[i:i + 8], 2) for i in range(redundancy_bits, len(bits), 8))
-            filtered = "".join(c for c in all_bytes.decode("utf-8", errors="replace") if c.isprintable() or c in " \t\n")
-            return filtered[:100]
-        except Exception:
-            pass
-        return ""
+    text_length = struct.unpack(">I", decoded_bytes[-LENGTH_PREFIX_BYTES:])[0]
 
-    total_bits = redundancy_bits + text_length * 8
+    if text_length == 0 or text_length > payload_size - LENGTH_PREFIX_BYTES:
+        raise ValueError(f"无效的文本长度: {text_length}")
 
-    if len(bits) < total_bits:
-        try:
-            text_bytes = bytes(int(bits[i:i + 8], 2) for i in range(redundancy_bits, len(bits), 8))
-            return text_bytes.decode("utf-8", errors="replace")
-        except Exception:
-            pass
-        raise ValueError(f"比特流长度不足: {len(bits)} < {total_bits}")
-
-    text_bytes = bytes(int(bits[i:i + 8], 2) for i in range(redundancy_bits, total_bits, 8))
-    return text_bytes.decode("utf-8", errors="replace")
+    text_bytes = decoded_bytes[-LENGTH_PREFIX_BYTES - text_length:-LENGTH_PREFIX_BYTES]
+    return text_bytes.decode("utf-8")
 
 
 def file_to_bits(file_path: str) -> Tuple[str, str]:
-    """将文件读取为比特流字符串，前缀为文件名长度和文件内容长度
+    """将文件读取为比特流字符串，使用Reed-Solomon纠错码保护
+
+    编码格式: [encoded_size_4B][RS(filename_length_2B + filename_bytes + content_length_4B + content_bytes)][padding]
 
     Args:
         file_path: 文件路径
@@ -113,14 +185,23 @@ def file_to_bits(file_path: str) -> Tuple[str, str]:
 
     filename_length_prefix = struct.pack(">H", len(filename_bytes))
     content_length_prefix = struct.pack(">I", len(file_bytes))
-    full_bytes = filename_length_prefix + filename_bytes + content_length_prefix + file_bytes
+    payload = filename_length_prefix + filename_bytes + content_length_prefix + file_bytes
 
-    bits = "".join(format(b, "08b") for b in full_bytes)
+    encoded_bytes = _rs_encode(payload)
+    encoded_size_header = struct.pack(">I", len(encoded_bytes))
+    payload_size_header = struct.pack(">I", len(payload))
+    full_data = encoded_size_header + payload_size_header + encoded_bytes
+    bits = "".join(format(b, "08b") for b in full_data)
     return bits, filename
 
 
 def bits_to_file(bits: str, output_dir: str = ".") -> str:
-    """将比特流字符串解码并保存为文件
+    """将比特流字符串解码并保存为文件，使用Reed-Solomon纠错码自动纠正错误
+
+    解码流程:
+    1. 比特流→字节→读取前4字节获取RS编码数据大小
+    2. 提取编码数据→RS解码
+    3. 顺序解析: filename_length → filename → content_length → content
 
     Args:
         bits: 比特流字符串
@@ -128,23 +209,36 @@ def bits_to_file(bits: str, output_dir: str = ".") -> str:
 
     Returns:
         保存的文件路径
+
+    Raises:
+        ValueError: 当RS解码失败或数据格式无效时抛出
     """
     import os
     os.makedirs(output_dir, exist_ok=True)
 
+    raw_bytes = _bits_to_bytes(bits)
+
+    header_size = ENCODED_SIZE_PREFIX_BYTES + PAYLOAD_SIZE_PREFIX_BYTES
+    if len(raw_bytes) < header_size:
+        raise ValueError(f"比特流长度不足")
+
+    encoded_size = struct.unpack(">I", raw_bytes[:ENCODED_SIZE_PREFIX_BYTES])[0]
+    payload_size = struct.unpack(">I", raw_bytes[ENCODED_SIZE_PREFIX_BYTES:header_size])[0]
+    encoded_bytes = raw_bytes[header_size:header_size + encoded_size]
+    decoded_bytes = _rs_decode(encoded_bytes, payload_size)
+
     offset = 0
+    filename_length = struct.unpack(">H", decoded_bytes[offset:offset + FILENAME_LENGTH_BYTES])[0]
+    offset += FILENAME_LENGTH_BYTES
 
-    filename_length = struct.unpack(">H", int(bits[offset:offset + FILENAME_LENGTH_BYTES * 8], 2).to_bytes(FILENAME_LENGTH_BYTES, "big"))[0]
-    offset += FILENAME_LENGTH_BYTES * 8
-
-    filename_bytes = bytes(int(bits[i:i + 8], 2) for i in range(offset, offset + filename_length * 8, 8))
+    filename_bytes = decoded_bytes[offset:offset + filename_length]
     filename = filename_bytes.decode("utf-8")
-    offset += filename_length * 8
+    offset += filename_length
 
-    content_length = struct.unpack(">I", int(bits[offset:offset + LENGTH_PREFIX_BYTES * 8], 2).to_bytes(LENGTH_PREFIX_BYTES, "big"))[0]
-    offset += LENGTH_PREFIX_BYTES * 8
+    content_length = struct.unpack(">I", decoded_bytes[offset:offset + LENGTH_PREFIX_BYTES])[0]
+    offset += LENGTH_PREFIX_BYTES
 
-    file_bytes = bytes(int(bits[i:i + 8], 2) for i in range(offset, offset + content_length * 8, 8))
+    file_bytes = decoded_bytes[offset:offset + content_length]
 
     output_path = os.path.join(output_dir, filename)
     with open(output_path, "wb") as f:
@@ -190,6 +284,11 @@ def tensor_to_bits(tensor: "torch.Tensor") -> str:
 def max_text_capacity(data_depth: int, image_size: int) -> int:
     """计算给定配置下可嵌入的最大UTF-8文本字节数
 
+    考虑Reed-Solomon校验开销和编码数据大小头。
+    每223字节数据需要223+32=255字节编码空间（完整块），
+    不足223字节的最后一块需要data+32字节编码空间。
+    额外开销: 4字节编码大小头 + 4字节文本长度。
+
     Args:
         data_depth: 数据深度（每像素比特数）
         image_size: 图像尺寸
@@ -198,9 +297,13 @@ def max_text_capacity(data_depth: int, image_size: int) -> int:
         可嵌入的最大文本字节数
     """
     total_bits = data_depth * image_size * image_size
-    length_prefix_bits = LENGTH_PREFIX_BYTES * 8
-    available_bits = total_bits - length_prefix_bits
-    return max(available_bits // 8, 0)
+    total_bytes = total_bits // 8
+    header_size = ENCODED_SIZE_PREFIX_BYTES + PAYLOAD_SIZE_PREFIX_BYTES
+    available = total_bytes - header_size
+    num_full_blocks = available // RS_BLOCK_TOTAL
+    remaining = available % RS_BLOCK_TOTAL
+    data_bytes = num_full_blocks * RS_BLOCK_DATA + max(remaining - RS_BLOCK_PARITY, 0)
+    return max(data_bytes - LENGTH_PREFIX_BYTES, 0)
 
 
 def validate_text_length(text: str, data_depth: int, image_size: int) -> None:

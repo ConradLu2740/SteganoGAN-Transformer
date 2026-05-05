@@ -1,0 +1,35 @@
+experiment_name: A4_front_length
+
+length_position: "front"
+
+image_size: 128
+data_depth: 3
+hidden_size: 128
+num_heads: 4
+num_layers: 4
+mlp_ratio: 4.0
+window_size: 8
+patch_size: 4
+dropout: 0.1
+
+learning_rate_encoder: 0.0003
+learning_rate_decoder: 0.0003
+learning_rate_discriminator: 0.0002
+beta1: 0.5
+beta2: 0.999
+
+batch_size: 1
+num_epochs: 50
+num_workers: 0
+
+lambda_image: 5.0
+lambda_adv: 0.01
+lambda_bit: 2.0
+
+robustness:
+  enable: false
+
+data_path: ./data/datasets
+checkpoint_path: ./checkpoints
+log_dir: ./runs
+seed: 42

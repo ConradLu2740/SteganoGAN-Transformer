@@ -17,8 +17,8 @@ class RobustnessConfig:
 
 @dataclass
 class SteganoGANConfig:
-    image_size: int = 256
-    data_depth: int = 1
+    image_size: int = 128
+    data_depth: int = 3
     hidden_size: int = 128
     num_heads: int = 4
     num_layers: int = 4
@@ -33,8 +33,8 @@ class SteganoGANConfig:
     beta1: float = 0.5
     beta2: float = 0.999
 
-    batch_size: int = 8
-    num_epochs: int = 100
+    batch_size: int = 1
+    num_epochs: int = 50
     num_workers: int = 4
 
     lambda_image: float = 1.0

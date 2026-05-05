@@ -16,30 +16,30 @@ class Steganalyzer(nn.Module):
 
         self.conv_layers = nn.Sequential(
             nn.Conv2d(3, hidden_size, kernel_size=3, stride=2, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
 
             nn.Conv2d(hidden_size, hidden_size * 2, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(hidden_size * 2),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
 
             nn.Conv2d(hidden_size * 2, hidden_size * 4, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(hidden_size * 4),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
 
             nn.Conv2d(hidden_size * 4, hidden_size * 8, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(hidden_size * 8),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
 
             nn.Conv2d(hidden_size * 8, hidden_size * 16, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(hidden_size * 16),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
         )
 
         final_spatial = image_size // (2 ** 5)
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(hidden_size * 16 * final_spatial * final_spatial, 512),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
             nn.Dropout(0.3),
             nn.Linear(512, 1),
         )

@@ -1,0 +1,36 @@
+# 实验A3: 无鲁棒性训练（对比鲁棒性攻击层的效果）
+architecture:
+  backbone: "swin"
+  image_size: 128
+  data_depth: 3
+  hidden_size: 128
+  num_heads: 4
+  num_layers: 4
+  window_size: 8
+  patch_size: 4
+  mlp_ratio: 4.0
+  dropout: 0.0
+
+training:
+  batch_size: 1
+  num_epochs: 50
+  learning_rate_encoder: 0.0001
+  learning_rate_discriminator: 0.0001
+  beta1: 0.9
+  beta2: 0.999
+  lambda_image: 1.0
+  lambda_adv: 0.001
+  lambda_bit: 1.0
+
+robustness:
+  enable: false
+
+data:
+  data_path: "data/images"
+  num_workers: 0
+  seed: 42
+
+output:
+  checkpoint_path: "checkpoints/ablation_A3_no_robustness"
+  log_dir: "logs/ablation_A3_no_robustness"
+  result_path: "results/ablation_A3_no_robustness.json"

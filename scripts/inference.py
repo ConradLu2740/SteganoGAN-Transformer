@@ -106,6 +106,8 @@ def extract_text(
 ) -> str:
     """从含密图像中提取文本
 
+    使用Reed-Solomon纠错码自动纠正比特错误，无需复杂的回退逻辑。
+
     Args:
         model: SteganoGAN模型
         stego_image_path: 含密图像路径
@@ -113,6 +115,9 @@ def extract_text(
 
     Returns:
         提取的文本字符串
+
+    Raises:
+        ValueError: 当RS纠错失败时抛出
     """
     image_size = model.encoder.image_size
     data_depth = model.encoder.data_depth
@@ -129,27 +134,7 @@ def extract_text(
         extracted = model.extract(stego_tensor)
 
     bits_str = tensor_to_bits(extracted.squeeze(0))
-
-    # 尝试解码，如果长度前缀错误则尝试从补零位置推断实际长度
-    try:
-        return bits_to_text(bits_str)
-    except (ValueError, UnicodeDecodeError):
-        # 寻找第一个连续32个零的位置，推断为文本结束位置
-        # 长度前缀占32位，后面是文本内容
-        # 如果解码失败，尝试只取前若干位
-        import struct
-        length_bits = 32
-        if len(bits_str) >= length_bits:
-            try:
-                text_length = struct.unpack(">I", int(bits_str[:length_bits], 2).to_bytes(4, "big"))[0]
-                total_bits = length_bits + text_length * 8
-                if total_bits <= len(bits_str):
-                    text_bytes = bytes(int(bits_str[i:i + 8], 2) for i in range(length_bits, total_bits, 8))
-                    return text_bytes.decode("utf-8", errors="replace")
-            except Exception:
-                pass
-        # 如果仍然失败，返回前100个字符的原始比特表示用于调试
-        return f"[解码失败] 前100比特: {bits_str[:100]}"
+    return bits_to_text(bits_str)
 
 
 def embed_file(

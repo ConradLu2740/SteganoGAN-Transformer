@@ -1,0 +1,43 @@
+# 实验A5: 无GAN对抗训练（仅预训练编码器+解码器）
+architecture:
+  backbone: "swin"
+  image_size: 128
+  data_depth: 3
+  hidden_size: 128
+  num_heads: 4
+  num_layers: 4
+  window_size: 8
+  patch_size: 4
+  mlp_ratio: 4.0
+  dropout: 0.0
+
+training:
+  batch_size: 1
+  num_epochs: 50
+  pretrain_epochs: 50
+  learning_rate_encoder: 0.0001
+  learning_rate_discriminator: 0.0001
+  beta1: 0.9
+  beta2: 0.999
+  lambda_image: 1.0
+  lambda_adv: 0.0
+  lambda_bit: 1.0
+
+robustness:
+  enable: true
+  jpeg_quality_min: 50
+  jpeg_quality_max: 100
+  gaussian_noise_std_min: 0.001
+  gaussian_noise_std_max: 0.1
+  crop_ratio_min: 0.85
+  crop_ratio_max: 1.0
+
+data:
+  data_path: "data/images"
+  num_workers: 0
+  seed: 42
+
+output:
+  checkpoint_path: "checkpoints/ablation_A5_no_gan"
+  log_dir: "logs/ablation_A5_no_gan"
+  result_path: "results/ablation_A5_no_gan.json"

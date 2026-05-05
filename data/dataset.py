@@ -77,6 +77,16 @@ class SteganoGANDataset(Dataset):
             "Dropout prevents overfitting in neural networks.",
             "Transfer learning leverages pre-trained models.",
             "Hyperparameter tuning affects model performance.",
+            "Reed-Solomon codes enable forward error correction.",
+            "Swin Transformer uses shifted window attention.",
+            "Steganography differs from cryptography in secrecy.",
+            "Deep learning excels at pattern recognition tasks.",
+            "The loss function guides model optimization direction.",
+            "Image quality metrics include PSNR and SSIM.",
+            "Error correction codes add redundancy for reliability.",
+            "Feature maps encode spatial information hierarchically.",
+            "Learning rate scheduling helps convergence stability.",
+            "Data augmentation increases training set diversity.",
         ]
 
     def set_epoch(self, epoch: int) -> None:
